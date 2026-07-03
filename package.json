@@ -1,0 +1,28 @@
+{
+  "name": "skill-aicheng-search",
+  "displayName": "skill&爱成 - 对话搜索",
+  "description": "搜索 Claude Code 历史对话，Skill 和爱成兄的专属工具",
+  "version": "1.0.0",
+  "publisher": "skill-aicheng",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": ["*"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "skill-aicheng.search",
+        "title": "搜索历史对话",
+        "category": "skill&爱成"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "skill-aicheng.search",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f"
+      }
+    ]
+  }
+}
