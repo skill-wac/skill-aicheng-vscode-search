@@ -24,23 +24,16 @@ body {
 .search-box input { flex: 1; padding: 10px 14px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; }
 .search-box input:focus { border-color: var(--accent); }
 .search-box button { padding: 10px 18px; background: var(--accent); color: var(--bg); border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
-.search-box button:hover { opacity: 0.85; }
 .quick-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
 .tag { padding: 4px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; font-size: 12px; color: var(--text-dim); cursor: pointer; }
 .tag:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .results { display: flex; flex-direction: column; gap: 16px; }
 .result-group { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.group-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; font-size: 11px; color: var(--text-dim); background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border); }
-.group-header .open-btn {
-  padding: 2px 8px; background: var(--accent); color: var(--bg);
-  border: none; border-radius: 4px; font-size: 10px; cursor: pointer;
-  opacity: 0.7; transition: opacity 0.15s;
-}
-.group-header .open-btn:hover { opacity: 1; }
+.group-header { padding: 8px 12px; font-size: 11px; color: var(--text-dim); background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border); }
 .match-block { border-bottom: 1px solid var(--border); }
 .match-block:last-child { border-bottom: none; }
 .match-snippet {
-  padding: 10px 14px; cursor: pointer; transition: background 0.15s;
+  padding: 10px 14px; cursor: pointer;
   display: flex; gap: 8px; align-items: flex-start;
 }
 .match-snippet:hover { background: rgba(137,180,250,0.08); }
@@ -54,22 +47,24 @@ body {
 .ctx-line { padding: 4px 0; font-size: 12px; color: var(--text-dim); border-left: 2px solid var(--border); padding-left: 10px; }
 .ctx-line.match-line { background: var(--match-bg); color: var(--text); border-left-color: var(--highlight); }
 .ctx-line .ctx-time { color: var(--accent2); font-size: 10px; margin-right: 6px; }
-.ctx-actions { display: flex; gap: 6px; margin-top: 6px; }
+.ctx-actions { display: flex; gap: 6px; margin-top: 8px; }
 .ctx-actions button {
-  padding: 3px 10px; background: transparent; border: 1px solid var(--border);
+  padding: 4px 12px; background: transparent; border: 1px solid var(--border);
   border-radius: 4px; color: var(--text-dim); font-size: 11px; cursor: pointer;
 }
 .ctx-actions button:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.ctx-actions button.loading { opacity: 0.6; pointer-events: none; }
 .empty { text-align: center; padding: 40px; color: var(--text-dim); }
 .empty .icon { font-size: 48px; margin-bottom: 12px; }
 .msg { padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
 .msg.info { background: rgba(137,180,250,0.1); color: var(--accent); }
+.expanded-context { margin-top: 8px; padding: 10px 14px; background: rgba(0,0,0,0.2); border-radius: 6px; max-height: 400px; overflow-y: auto; }
 </style>
 </head>
 <body>
 <div class="header">
   <span class="logo">skill &amp; 爱成</span>
-  <span class="subtitle">Ctrl+Alt+F 快速搜索 | 点击展开上下文</span>
+  <span class="subtitle">Ctrl+Alt+F | 点击展开上下文</span>
 </div>
 <div class="search-box">
   <input id="searchInput" type="text" placeholder="输入关键词搜索..." autofocus onkeydown="if(event.key==='Enter')doSearch()">
@@ -87,6 +82,7 @@ body {
 </div>
 <script>
 const vscode = acquireVsCodeApi();
+
 window.addEventListener('message', event => {
   const msg = event.data;
   if (msg.type === 'search') {
@@ -95,83 +91,129 @@ window.addEventListener('message', event => {
     vscode.postMessage({ type: 'search', keyword: msg.keyword, limit: 20 });
   } else if (msg.type === 'results') {
     renderResults(msg.keyword, msg.results);
+  } else if (msg.type === 'expandedContext') {
+    showExpandedContext(msg.results);
   }
 });
+
 function doSearch() {
   const kw = document.getElementById('searchInput').value.trim();
   if (!kw) return;
   document.getElementById('results').innerHTML = '<div class="msg info">搜索中...</div>';
   vscode.postMessage({ type: 'search', keyword: kw, limit: 20 });
 }
+
 function quickSearch(kw) {
   document.getElementById('searchInput').value = kw;
   document.getElementById('results').innerHTML = '<div class="msg info">搜索中...</div>';
   vscode.postMessage({ type: 'search', keyword: kw, limit: 20 });
 }
+
 function highlightText(text, keyword) {
   if (!keyword || !text) return text;
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return text.replace(new RegExp(`(${escaped})`, 'gi'), '<span class="highlight">$1</span>');
+  const esc = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(new RegExp(`(${esc})`, 'gi'), '<span class="highlight">$1</span>');
 }
+
 function toggleContext(id) {
   const box = document.getElementById(id);
   if (box) box.classList.toggle('show');
 }
-function openFile(file, line) {
-  vscode.postMessage({ type: 'openFile', file, line });
+
+function expandMore(btn, gi, mi, keyword) {
+  btn.textContent = '加载中...';
+  btn.classList.add('loading');
+  vscode.postMessage({ type: 'expandContext', keyword, contextLines: 15, groupIndex: gi, matchIndex: mi });
+  // 存储当前展开的目标
+  btn._targetCid = 'expand-' + gi + '-' + mi;
+  window._expandTarget = btn;
 }
+
+function showExpandedContext(results) {
+  const btn = window._expandTarget;
+  if (!btn) return;
+
+  const targetId = btn._targetCid;
+  const cid = btn.closest('.context-box')?.id;
+  const ctxBox = cid ? document.getElementById(cid) : btn.parentElement;
+
+  // 移除旧的展开
+  const old = document.getElementById(targetId);
+  if (old) old.remove();
+
+  let html = '<div class="expanded-context" id="' + targetId + '">';
+  html += '<div style="font-size:11px;color:var(--accent2);margin-bottom:8px">展开的上下文：</div>';
+
+  if (results && results[0] && results[0].matches && results[0].matches[0]) {
+    const m = results[0].matches[0];
+    if (m.context) {
+      m.context.forEach(cl => {
+        const cls = cl.marker === '>>' ? 'ctx-line match-line' : 'ctx-line';
+        html += '<div class="' + cls + '"><span class="ctx-time">' + cl.time + '</span>' + highlightText(cl.text, window._lastKeyword || '') + '</div>';
+      });
+    }
+  } else {
+    html += '<div style="color:var(--text-dim)">无法加载更多上下文</div>';
+  }
+  html += '</div>';
+
+  if (ctxBox) {
+    ctxBox.insertAdjacentHTML('beforeend', html);
+  }
+
+  btn.textContent = '查看更多上下文';
+  btn.classList.remove('loading');
+  window._expandTarget = null;
+}
+
 function renderResults(keyword, results) {
+  window._lastKeyword = keyword;
   const container = document.getElementById('results');
+
   if (!results || results.length === 0 || results[0]?.error) {
-    container.innerHTML = '<div class="empty"><div class="icon">📭</div><div>没找到</div></div>';
+    container.innerHTML = '<div class="empty"><div class="icon">📭</div><div>' + (results?.[0]?.error || '没找到') + '</div></div>';
     return;
   }
-  let html = `<div class="msg info">搜索 &quot;${keyword}&quot;</div>`;
+
+  let html = '<div class="msg info">搜索 &quot;' + keyword + '&quot;</div>';
+
   results.forEach((group, gi) => {
     if (!group.matches || group.matches.length === 0) return;
     html += '<div class="result-group">';
-    html += `<div class="group-header">`;
-    html += `<span>${group.session}</span>`;
-    if (group.file) {
-      html += `<button class="open-btn" onclick="openFile('${group.file}', 1)">📂 打开源文件</button>`;
-    }
-    html += `</div>`;
+    html += '<div class="group-header">' + group.session + '</div>';
 
     group.matches.forEach((m, mi) => {
-      const cid = `ctx-${gi}-${mi}`;
+      const cid = 'ctx-' + gi + '-' + mi;
       html += '<div class="match-block">';
-      html += `<div class="match-snippet" onclick="toggleContext('${cid}')">`;
-      html += `<span class="arrow" id="arr-${cid}">▶</span>`;
+      html += '<div class="match-snippet" onclick="toggleContext(\'' + cid + '\')">';
+      html += '<span class="arrow">▶</span>';
       html += '<div class="match-content">';
-      html += `<div class="match-time">${m.time}</div>`;
-      html += `<div class="match-text">${highlightText(m.snippet, keyword)}</div>`;
+      html += '<div class="match-time">' + m.time + '</div>';
+      html += '<div class="match-text">' + highlightText(m.snippet, keyword) + '</div>';
       html += '</div></div>';
 
-      // 上下文
-      html += `<div class="context-box" id="${cid}">`;
+      html += '<div class="context-box" id="' + cid + '">';
       if (m.context && m.context.length > 0) {
         m.context.forEach(cl => {
           const cls = cl.marker === '>>' ? 'ctx-line match-line' : 'ctx-line';
-          html += `<div class="${cls}"><span class="ctx-time">${cl.time}</span>${highlightText(cl.text, keyword)}</div>`;
+          html += '<div class="' + cls + '"><span class="ctx-time">' + cl.time + '</span>' + highlightText(cl.text, keyword) + '</div>';
         });
       }
       html += '<div class="ctx-actions">';
-      html += `<button onclick="event.stopPropagation(); openFile('${group.file}', ${m.line})">📂 跳转到此行</button>`;
+      html += '<button onclick="event.stopPropagation(); expandMore(this, ' + gi + ', ' + mi + ', \'' + keyword.replace(/'/g, "\\'") + '\')">查看更多上下文</button>';
       html += '</div>';
       html += '</div>';
       html += '</div>';
     });
     html += '</div>';
   });
+
   container.innerHTML = html;
 
-  // 展开时箭头旋转
   container.querySelectorAll('.match-snippet').forEach(el => {
     el.addEventListener('click', function() {
       const arrow = this.querySelector('.arrow');
-      if (arrow) {
-        arrow.textContent = arrow.textContent === '▶' ? '▼' : '▶';
-      }
+      if (arrow) arrow.textContent = arrow.textContent === '▶' ? '▼' : '▶';
     });
   });
 }

@@ -45,28 +45,15 @@ function openSearchPanel(context, keyword) {
     currentPanel.onDidDispose(() => { currentPanel = undefined; });
 
     const htmlPath = path.join(context.extensionPath, 'media', 'search.html');
-    let html = fs.readFileSync(htmlPath, 'utf-8');
-    currentPanel.webview.html = html;
+    currentPanel.webview.html = fs.readFileSync(htmlPath, 'utf-8');
 
     currentPanel.webview.onDidReceiveMessage(async (msg) => {
-        switch (msg.type) {
-            case 'search':
-                const results = await runSearch(context, msg.keyword, msg.limit || 20);
-                currentPanel.webview.postMessage({ type: 'results', keyword: msg.keyword, results });
-                break;
-            case 'openFile':
-                // 在 VS Code 中打开 JSONL 文件并跳转到指定行
-                const uri = vscode.Uri.file(msg.file);
-                const doc = await vscode.workspace.openTextDocument(uri);
-                const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One });
-                // 跳转到目标行
-                const line = Math.max(0, (msg.line || 1) - 1);
-                editor.revealRange(
-                    new vscode.Range(line, 0, line, 200),
-                    vscode.TextEditorRevealType.InCenter
-                );
-                editor.selection = new vscode.Selection(line, 0, line, 0);
-                break;
+        if (msg.type === 'search') {
+            const results = await doSearch(context, msg.keyword, msg.limit || 20, 2);
+            currentPanel.webview.postMessage({ type: 'results', keyword: msg.keyword, results });
+        } else if (msg.type === 'expandContext') {
+            const results = await doSearch(context, msg.keyword, 1, msg.contextLines || 10);
+            currentPanel.webview.postMessage({ type: 'expandedContext', results });
         }
     });
 
@@ -77,62 +64,43 @@ function openSearchPanel(context, keyword) {
     }
 }
 
-function runSearch(context, keyword, limit) {
+function doSearch(context, keyword, limit, ctxLines) {
     return new Promise((resolve) => {
         const scriptPath = path.join(context.extensionPath, 'search.py');
-        execFile('python', [scriptPath, keyword, '--limit', String(limit), '--context', '2'], {
+        execFile('python', [scriptPath, keyword, '--limit', String(limit), '--context', String(ctxLines)], {
             maxBuffer: 10 * 1024 * 1024, timeout: 30000
         }, (error, stdout) => {
             if (error) {
                 resolve([{ error: '搜索出错: ' + error.message }]);
                 return;
             }
-
-            const results = [];
-            let current = null;
-
-            for (const line of stdout.split('\n')) {
-                if (line.startsWith('GROUP:')) {
-                    if (current && current.matches && current.matches.length > 0) {
-                        results.push(current);
-                    }
-                    const parts = line.substring(6).split('|');
-                    current = {
-                        session: parts[0],
-                        file: parts[1] || '',
-                        matches: []
-                    };
-                } else if (line.startsWith('MATCH:') && current) {
-                    const parts = line.substring(6).split('|');
-                    current.matches.push({
-                        line: parseInt(parts[0]) || 1,
-                        time: parts[1] || '',
-                        snippet: parts.slice(2).join('|'),
-                        context: []
-                    });
-                } else if (line.startsWith('CTX:') && current && current.matches.length > 0) {
-                    const last = current.matches[current.matches.length - 1];
-                    const parts = line.substring(4).split('|');
-                    last.context.push({
-                        marker: parts[0],
-                        time: parts[1] || '',
-                        text: parts.slice(2).join('|')
-                    });
-                }
-            }
-            if (current && current.matches && current.matches.length > 0) {
-                results.push(current);
-            }
-
-            if (results.length === 0 && stdout.includes('NORESULTS')) {
-                resolve([]);
-            } else if (results.length === 0) {
-                resolve([{ error: '搜索出错或未找到结果' }]);
-            } else {
-                resolve(results);
-            }
+            resolve(parseOutput(stdout));
         });
     });
+}
+
+function parseOutput(stdout) {
+    const results = [];
+    let current = null;
+    for (const line of stdout.split('\n')) {
+        if (line.startsWith('GROUP:')) {
+            if (current && current.matches && current.matches.length > 0) results.push(current);
+            const parts = line.substring(6).split('|');
+            current = { session: parts[0], file: parts[1] || '', matches: [] };
+        } else if (line.startsWith('MATCH:') && current) {
+            const parts = line.substring(6).split('|');
+            current.matches.push({ line: parseInt(parts[0]) || 1, time: parts[1] || '', snippet: parts.slice(2).join('|'), context: [] });
+        } else if (line.startsWith('CTX:') && current && current.matches.length > 0) {
+            const last = current.matches[current.matches.length - 1];
+            const parts = line.substring(4).split('|');
+            last.context.push({ marker: parts[0], time: parts[1] || '', text: parts.slice(2).join('|') });
+        }
+    }
+    if (current && current.matches && current.matches.length > 0) results.push(current);
+    if (results.length === 0 && !stdout.includes('NORESULTS')) {
+        return [{ error: '未找到匹配' }];
+    }
+    return results;
 }
 
 function deactivate() {}

@@ -11,7 +11,7 @@ from datetime import datetime
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-PROJECTS_BASE = os.path.expanduser("~/.claude/projects")
+PROJECTS_BASE = os.path.normpath(os.path.expanduser("~/.claude/projects"))
 
 
 def get_jsonl_files(project_filter=None):
@@ -20,7 +20,7 @@ def get_jsonl_files(project_filter=None):
         dirs[:] = [d for d in dirs if d not in ('tool-results', 'memory', 'tasks')]
         for f in filenames:
             if f.endswith('.jsonl') and not f.startswith('.'):
-                full_path = os.path.join(root, f)
+                full_path = os.path.normpath(os.path.join(root, f))
                 project = os.path.basename(root)
                 if project_filter and project_filter.lower() not in project.lower():
                     continue
