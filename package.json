@@ -2,7 +2,7 @@
   "name": "skill-aicheng-search",
   "displayName": "skill&爱成 - 对话搜索",
   "description": "搜索 Claude Code 历史对话，Skill 和爱成兄的专属工具",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "publisher": "skill-aicheng",
   "engines": {
     "vscode": "^1.80.0"
