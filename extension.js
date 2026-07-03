@@ -49,9 +49,24 @@ function openSearchPanel(context, keyword) {
     currentPanel.webview.html = html;
 
     currentPanel.webview.onDidReceiveMessage(async (msg) => {
-        if (msg.type === 'search') {
-            const results = await runSearch(context, msg.keyword, msg.limit || 20);
-            currentPanel.webview.postMessage({ type: 'results', keyword: msg.keyword, results });
+        switch (msg.type) {
+            case 'search':
+                const results = await runSearch(context, msg.keyword, msg.limit || 20);
+                currentPanel.webview.postMessage({ type: 'results', keyword: msg.keyword, results });
+                break;
+            case 'openFile':
+                // 在 VS Code 中打开 JSONL 文件并跳转到指定行
+                const uri = vscode.Uri.file(msg.file);
+                const doc = await vscode.workspace.openTextDocument(uri);
+                const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One });
+                // 跳转到目标行
+                const line = Math.max(0, (msg.line || 1) - 1);
+                editor.revealRange(
+                    new vscode.Range(line, 0, line, 200),
+                    vscode.TextEditorRevealType.InCenter
+                );
+                editor.selection = new vscode.Selection(line, 0, line, 0);
+                break;
         }
     });
 
@@ -65,26 +80,57 @@ function openSearchPanel(context, keyword) {
 function runSearch(context, keyword, limit) {
     return new Promise((resolve) => {
         const scriptPath = path.join(context.extensionPath, 'search.py');
-        execFile('python', [scriptPath, keyword, '--limit', String(limit)], {
+        execFile('python', [scriptPath, keyword, '--limit', String(limit), '--context', '2'], {
             maxBuffer: 10 * 1024 * 1024, timeout: 30000
         }, (error, stdout) => {
             if (error) {
-                resolve([{ items: [{ time: '', text: '搜索出错: ' + error.message }] }]);
+                resolve([{ error: '搜索出错: ' + error.message }]);
                 return;
             }
+
             const results = [];
             let current = null;
+
             for (const line of stdout.split('\n')) {
-                if (line.startsWith('━━━')) {
-                    if (current && current.items.length > 0) results.push(current);
-                    current = { session: line.replace(/━/g, '').trim(), items: [] };
-                } else if (current && line.trim().match(/^\[\d/)) {
-                    const m = line.match(/\[(.*?)\]\s*(.*)/);
-                    if (m) current.items.push({ time: m[1], text: m[2] });
+                if (line.startsWith('GROUP:')) {
+                    if (current && current.matches && current.matches.length > 0) {
+                        results.push(current);
+                    }
+                    const parts = line.substring(6).split('|');
+                    current = {
+                        session: parts[0],
+                        file: parts[1] || '',
+                        matches: []
+                    };
+                } else if (line.startsWith('MATCH:') && current) {
+                    const parts = line.substring(6).split('|');
+                    current.matches.push({
+                        line: parseInt(parts[0]) || 1,
+                        time: parts[1] || '',
+                        snippet: parts.slice(2).join('|'),
+                        context: []
+                    });
+                } else if (line.startsWith('CTX:') && current && current.matches.length > 0) {
+                    const last = current.matches[current.matches.length - 1];
+                    const parts = line.substring(4).split('|');
+                    last.context.push({
+                        marker: parts[0],
+                        time: parts[1] || '',
+                        text: parts.slice(2).join('|')
+                    });
                 }
             }
-            if (current && current.items.length > 0) results.push(current);
-            resolve(results);
+            if (current && current.matches && current.matches.length > 0) {
+                results.push(current);
+            }
+
+            if (results.length === 0 && stdout.includes('NORESULTS')) {
+                resolve([]);
+            } else if (results.length === 0) {
+                resolve([{ error: '搜索出错或未找到结果' }]);
+            } else {
+                resolve(results);
+            }
         });
     });
 }
